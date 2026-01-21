@@ -1,57 +1,55 @@
+import 'react-native-worklets-core'; // MUST BE FIRST
+import 'react-native-reanimated';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, ActivityIndicator } from 'react-native';
-import { Camera } from 'react-native-vision-camera';
+import { Camera, useCameraDevice, useFrameProcessor } from 'react-native-vision-camera';
 import { yoloService } from './src/services/YOLOService';
 import { databaseService } from './src/services/DatabaseService';
 
 export default function App() {
   const [modelLoaded, setModelLoaded] = useState(false);
   const [dbLoaded, setDbLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [hasPermission, setHasPermission] = useState(false);
+  
+  const device = useCameraDevice('back');
 
   useEffect(() => {
-    async function init() {
-      try {
-        const status = await Camera.requestCameraPermission();
-        if (status === 'denied') {
-          setError('Camera permission denied');
-          return;
-        }
+    (async () => {
+      const status = await Camera.requestCameraPermission();
+      setHasPermission(status === 'granted');
 
-        const modelOk = await yoloService.loadModel();
-        if (modelOk) setModelLoaded(true);
-        else setError('Failed to load YOLO Model');
+      const modelOk = await yoloService.loadModel();
+      if (modelOk) setModelLoaded(true);
+      else console.log('TFLite model missing (Expected for now)');
 
-        const dbOk = await databaseService.initDb();
-        if (dbOk) setDbLoaded(true);
-        else setError('Failed to load Database');
-      } catch (e: any) {
-        setError(e.message);
-      }
-    }
-    init();
+      const dbOk = await databaseService.initDb();
+      if (dbOk) setDbLoaded(true);
+    })();
   }, []);
 
-  if (error) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>{error}</Text>
-      </View>
-    );
-  }
+  const frameProcessor = useFrameProcessor((frame) => {
+    'worklet';
+    // console.log(`Frame: ${frame.width}x${frame.height}`);
+  }, []);
+
+  if (!hasPermission) return <View style={styles.center}><Text>No Camera Permission</Text></View>;
+  if (!device) return <View style={styles.center}><Text>No Back Camera Found</Text></View>;
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Pokemon Camera Lab</Text>
+      <Camera
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={true}
+        frameProcessor={frameProcessor}
+        pixelFormat="yuv"
+      />
       
-      <View style={styles.statusBox}>
-        <Text>ML Model: {modelLoaded ? 'LOADED ✅' : 'LOADING...'}</Text>
+      <View style={styles.overlay}>
+        <Text style={styles.statusText}>
+          ML: {modelLoaded ? '✅' : '❌'} | DB: {dbLoaded ? '✅' : '❌'}
+        </Text>
       </View>
-      <View style={[styles.statusBox, { marginTop: 10 }]}>
-        <Text>Database: {dbLoaded ? 'LOADED ✅' : 'LOADING...'}</Text>
-      </View>
-
-      {(!modelLoaded || !dbLoaded) && <ActivityIndicator style={{ marginTop: 20 }} />}
     </View>
   );
 }
@@ -59,26 +57,27 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: 'black',
+  },
+  center: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
   },
-  title: {
-    fontSize: 24,
+  overlay: {
+    position: 'absolute',
+    top: 50,
+    left: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 10,
+    borderRadius: 8,
+  },
+  statusText: {
+    color: 'white',
     fontWeight: 'bold',
-    marginBottom: 20,
-  },
-  statusBox: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 10,
-    width: '85%',
-    alignItems: 'center',
-    elevation: 2,
   },
   errorText: {
     color: 'red',
     fontSize: 16,
-  },
+  }
 });

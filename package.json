@@ -14,13 +14,11 @@
     "expo-file-system": "~19.0.21",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
-    "onnxruntime-react-native": "^1.23.2",
     "react": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-fast-tflite": "^2.0.0",
     "react-native-gesture-handler": "~2.28.0",
-    "react-native-reanimated": "~4.1.1",
-    "react-native-vision-camera": "^4.7.3",
-    "react-native-worklets-core": "^1.6.2"
+    "react-native-vision-camera": "^4.7.3"
   },
   "devDependencies": {
     "@expo/metro-config": "^54.0.13",
