@@ -39,7 +39,8 @@
         }
       ],
       "expo-sqlite",
-      "expo-asset"
+      "expo-asset",
+      "onnxruntime-react-native"
     ]
   }
 }
