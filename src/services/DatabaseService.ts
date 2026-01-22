@@ -155,10 +155,37 @@ export class DatabaseService {
       .map(w => w.replace(/[^a-zA-Z]/g, '').toLowerCase())
       .filter(w => w.length > 2);
 
+    // Детектируем суффиксы карт по контексту
+    let suffix = '';
+    const textLower = fullText.toLowerCase();
+    if (textLower.includes('team galactic')) suffix = ' g';
+    else if (textLower.includes('vmax') || /\bvmax\b/i.test(fullText)) suffix = ' vmax';
+    else if (textLower.includes('vstar') || /\bvstar\b/i.test(fullText)) suffix = ' vstar';
+    else if (/\bv\b/i.test(fullText) && !textLower.includes('vmax')) suffix = ' v';
+    else if (textLower.includes('-gx') || /\bgx\b/i.test(fullText)) suffix = '-gx';
+    else if (textLower.includes('-ex') || /\bex\b/i.test(fullText)) suffix = '-ex';
+    // Также проверяем в словах
+    for (const w of cleanWords) {
+      if (w === 'gx' || w === 'ex' || w === 'vmax' || w === 'vstar') {
+        if (!suffix) suffix = w === 'gx' ? '-gx' : w === 'ex' ? '-ex' : ` ${w}`;
+      }
+    }
+
     // Ищем точное совпадение с именем в базе
     for (const word of cleanWords) {
+      // Сначала пробуем с суффиксом
+      if (suffix && this.cardsByName.has(word + suffix)) {
+        result.name = word + suffix;
+        console.log(`Found name with suffix: ${result.name}`);
+        break;
+      }
+      // Потом без суффикса
       if (this.cardsByName.has(word)) {
-        result.name = word;
+        result.name = suffix ? word + suffix : word;
+        // Проверяем существует ли версия с суффиксом
+        if (suffix && this.cardsByName.has(word + suffix)) {
+          result.name = word + suffix;
+        }
         break;
       }
     }
