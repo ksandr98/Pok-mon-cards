@@ -28,6 +28,7 @@
   "devDependencies": {
     "@expo/metro-config": "^54.0.13",
     "@react-native-community/cli": "^20.1.0",
+    "@react-native/metro-config": "^0.83.1",
     "@types/react": "~19.1.0",
     "babel-preset-expo": "^54.0.9",
     "sharp": "^0.34.5",

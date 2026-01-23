@@ -53,12 +53,13 @@ export default function App() {
           if (photo) {
             let uriToScan = photo.uri;
             try {
-                const cropW = Math.floor(photo.width * 0.6);
-                const cropH = Math.floor(photo.height * 0.6);
+                // Crop to match the green frame: 80% width, 1.4 aspect ratio, centered
+                const cropW = Math.floor(photo.width * 0.8);
+                const cropH = Math.min(Math.floor(cropW * 1.4), photo.height);
                 const originX = Math.floor((photo.width - cropW) / 2);
                 const originY = Math.floor((photo.height - cropH) / 2);
 
-                if (cropW > 0 && cropH > 0 && originX >= 0) {
+                if (cropW > 0 && cropH > 0 && originX >= 0 && originY >= 0) {
                     const cropped = await ImageManipulator.manipulateAsync(
                         photo.uri,
                         [{ crop: { originX, originY, width: cropW, height: cropH } }]
@@ -68,12 +69,12 @@ export default function App() {
             } catch (e) { }
 
             const result = await ocrService.recognize(uriToScan);
-            
+
             if (result) {
-                setDebugText(result.text.replace(/\n/g, ' ').substring(0, 100));
+                setDebugText(result.fullText.replace(/\n/g, ' ').substring(0, 100));
 
                 if (result.words.length > 0) {
-                    const found = await databaseService.findCandidates(result.words, result.text);
+                    const found = await databaseService.findCandidates(result.words, result.fullText, result);
                     setCandidates(found);
                 }
             }

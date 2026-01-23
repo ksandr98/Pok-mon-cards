@@ -1,6 +1,10 @@
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
+import { ZoneResult } from './OCRService';
+
+// Русский маппинг
+import ruMapping from '../../assets/ru-mapping.json';
 
 interface ParsedOCR {
   name: string | null;
@@ -24,6 +28,10 @@ export class DatabaseService {
   private cardsByHP: Map<number, any[]> = new Map();
   private cardsByName: Map<string, any[]> = new Map();
   private attackIndex: Map<string, any[]> = new Map();
+
+  // Русский маппинг
+  private ruPokemon: Record<string, string> = ruMapping.pokemon;
+  private ruAttacks: Record<string, string> = ruMapping.attacks;
 
   async initDb() {
     try {
@@ -94,9 +102,9 @@ export class DatabaseService {
   }
 
   /**
-   * Парсит OCR текст и извлекает структурированные данные
+   * Парсит OCR текст и извлекает структурированные данные с учётом зон
    */
-  parseOCRText(fullText: string, words: string[]): ParsedOCR {
+  parseOCRText(fullText: string, words: string[], zones?: ZoneResult): ParsedOCR {
     const result: ParsedOCR = {
       name: null,
       hp: null,
@@ -105,55 +113,90 @@ export class DatabaseService {
       attacks: []
     };
 
-    // DEBUG: Логируем что OCR реально видит
-    console.log('OCR RAW TEXT:', fullText.substring(0, 300));
+    const topText = zones?.topText || fullText.substring(0, Math.floor(fullText.length * 0.3));
+    const middleText = zones?.middleText || '';
+    const bottomText = zones?.bottomText || '';
 
-    // 1. Извлекаем HP - множество паттернов
+    // DEBUG: Логируем зоны
+    console.log('ZONE TOP:', topText.replace(/\n/g, ' ').substring(0, 120));
+    console.log('ZONE MID:', middleText.replace(/\n/g, ' ').substring(0, 120));
+    console.log('ZONE BOT:', bottomText.replace(/\n/g, ' ').substring(0, 80));
+
+    // 1. Извлекаем HP - ищем сначала в верхней зоне, потом в полном тексте
     const hpPatterns = [
-      /(\d{2,3})\s*HP/i,           // "70 HP", "70HP"
-      /HP\s*(\d{2,3})/i,           // "HP 70", "HP70"
-      /(\d{2,3})\s*H\s*P/i,        // "70 H P" (OCR может разбить)
+      /(\d{2,3})\s*HP/i,
+      /HP\s*(\d{2,3})/i,
+      /(\d{2,3})\s*H\s*P/i,
+      /(\d{2,3})\s*ОЖ/i,
+      /ОЖ\s*(\d{2,3})/i,
+      /(\d{2,3})\s*О\s*Ж/i,
     ];
-    for (const pattern of hpPatterns) {
-      const match = fullText.match(pattern);
-      if (match) {
-        const hp = parseInt(match[1]);
-        if (hp >= 30 && hp <= 340) {
-          result.hp = hp;
-          break;
-        }
-      }
-    }
 
-    // Если не нашли HP по паттернам - ищем числа в начале текста (первые 50 символов)
-    // На современных картах HP часто просто число в углу
-    if (!result.hp) {
-      const firstPart = fullText.substring(0, 80);
-      const numbers = firstPart.match(/\b(\d{2,3})\b/g);
-      if (numbers) {
-        for (const numStr of numbers) {
-          const num = parseInt(numStr);
-          // HP обычно кратно 10 и в диапазоне 30-340
-          if (num >= 30 && num <= 340 && num % 10 === 0) {
-            result.hp = num;
-            console.log(`HP detected from number: ${num}`);
+    // Приоритет: верхняя зона (там обычно HP)
+    const hpSearchTexts = [topText, fullText];
+    for (const searchText of hpSearchTexts) {
+      if (result.hp) break;
+      for (const pattern of hpPatterns) {
+        const match = searchText.match(pattern);
+        if (match) {
+          const hp = parseInt(match[1]);
+          if (hp >= 30 && hp <= 340) {
+            result.hp = hp;
             break;
           }
         }
       }
     }
 
-    // 2. Извлекаем номер сета - паттерн: "123/456"
-    const setMatch = fullText.match(/(\d{1,3})\s*[\/]\s*(\d{2,3})/);
-    if (setMatch) {
-      result.setNumber = `${setMatch[1]}/${setMatch[2]}`;
+    // Fallback: числа кратные 10 в верхней зоне
+    if (!result.hp) {
+      const numbers = topText.match(/\b(\d{2,3})\b/g);
+      if (numbers) {
+        for (const numStr of numbers) {
+          const num = parseInt(numStr);
+          if (num >= 30 && num <= 340 && num % 10 === 0) {
+            result.hp = num;
+            console.log(`HP from top zone number: ${num}`);
+            break;
+          }
+        }
+      }
     }
 
-    // 3. Извлекаем имя покемона
-    // Стратегия: ищем известные имена покемонов в тексте
-    const cleanWords = words
-      .map(w => w.replace(/[^a-zA-Z]/g, '').toLowerCase())
+    // 2. Извлекаем номер сета - приоритет нижняя зона
+    const setSearchTexts = [bottomText, fullText];
+    for (const searchText of setSearchTexts) {
+      if (result.setNumber) break;
+      const setMatch = searchText.match(/(\d{1,3})\s*[\/]\s*(\d{2,3})/);
+      if (setMatch) {
+        result.setNumber = `${setMatch[1]}/${setMatch[2]}`;
+      }
+    }
+
+    // 3. Извлекаем имя покемона - приоритет верхняя зона
+    const topWords = topText.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const allCleanWords = words
+      .map(w => w.replace(/[^a-zA-Zа-яёА-ЯЁ\-\.]/g, '').toLowerCase())
       .filter(w => w.length > 2);
+    const topCleanWords = topWords
+      .map(w => w.replace(/[^a-zA-Zа-яёА-ЯЁ\-\.]/g, '').toLowerCase())
+      .filter(w => w.length > 2);
+
+    // Проверяем русские имена (сначала в верхней зоне, потом везде)
+    const wordSets = [topCleanWords, allCleanWords];
+    for (const wordSet of wordSets) {
+      if (result.name) break;
+      for (const word of wordSet) {
+        if (this.ruPokemon[word]) {
+          const englishName = this.ruPokemon[word];
+          console.log(`RU→EN: ${word} → ${englishName}`);
+          if (this.cardsByName.has(englishName)) {
+            result.name = englishName;
+            break;
+          }
+        }
+      }
+    }
 
     // Детектируем суффиксы карт по контексту
     let suffix = '';
@@ -164,37 +207,34 @@ export class DatabaseService {
     else if (/\bv\b/i.test(fullText) && !textLower.includes('vmax')) suffix = ' v';
     else if (textLower.includes('-gx') || /\bgx\b/i.test(fullText)) suffix = '-gx';
     else if (textLower.includes('-ex') || /\bex\b/i.test(fullText)) suffix = '-ex';
-    // Также проверяем в словах
-    for (const w of cleanWords) {
+    for (const w of allCleanWords) {
       if (w === 'gx' || w === 'ex' || w === 'vmax' || w === 'vstar') {
         if (!suffix) suffix = w === 'gx' ? '-gx' : w === 'ex' ? '-ex' : ` ${w}`;
       }
     }
 
-    // Ищем точное совпадение с именем в базе
-    for (const word of cleanWords) {
-      // Сначала пробуем с суффиксом
-      if (suffix && this.cardsByName.has(word + suffix)) {
-        result.name = word + suffix;
-        console.log(`Found name with suffix: ${result.name}`);
-        break;
-      }
-      // Потом без суффикса
-      if (this.cardsByName.has(word)) {
-        result.name = suffix ? word + suffix : word;
-        // Проверяем существует ли версия с суффиксом
-        if (suffix && this.cardsByName.has(word + suffix)) {
-          result.name = word + suffix;
+    // Ищем точное совпадение (приоритет: верхняя зона, потом все слова)
+    if (!result.name) {
+      for (const wordSet of [topCleanWords, allCleanWords]) {
+        if (result.name) break;
+        for (const word of wordSet) {
+          if (suffix && this.cardsByName.has(word + suffix)) {
+            result.name = word + suffix;
+            break;
+          }
+          if (this.cardsByName.has(word)) {
+            result.name = suffix && this.cardsByName.has(word + suffix) ? word + suffix : word;
+            break;
+          }
         }
-        break;
       }
     }
 
-    // Если не нашли, ищем частичное совпадение
+    // Частичное совпадение (fallback)
     if (!result.name) {
-      for (const word of cleanWords) {
+      for (const word of allCleanWords) {
         if (word.length < 4) continue;
-        for (const [name, _] of this.cardsByName) {
+        for (const [name] of this.cardsByName) {
           if (name.includes(word) || word.includes(name)) {
             result.name = name;
             break;
@@ -204,15 +244,16 @@ export class DatabaseService {
       }
     }
 
-    // 4. Извлекаем названия атак и способностей
-    // Ищем паттерны типа "Ability: Name" или просто капитализированные фразы
-    const abilityMatch = fullText.match(/Ability[\s:]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/);
+    // 4. Извлекаем атаки - приоритет средняя зона
+    const attackSource = middleText || fullText;
+
+    const abilityMatch = attackSource.match(/Ability[\s:]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/);
     if (abilityMatch) {
       result.attacks.push(abilityMatch[1].toLowerCase());
     }
 
-    // Ищем двухсловные названия атак (Overdrive Smash, Thunder Shock, etc.)
-    const twoWordAttacks = fullText.match(/([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s|$|\n)/g);
+    // Двухсловные атаки из средней зоны
+    const twoWordAttacks = attackSource.match(/([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s|$|\n)/g);
     if (twoWordAttacks) {
       for (const attack of twoWordAttacks) {
         const clean = attack.toLowerCase();
@@ -223,22 +264,40 @@ export class DatabaseService {
       }
     }
 
-    // Также собираем отдельные длинные слова
+    // Длинные слова из средней зоны как потенциальные атаки
     const skipWords = new Set(['basic', 'stage', 'pokemon', 'trainer', 'energy', 'weakness',
                                'resistance', 'retreat', 'cost', 'damage', 'coin', 'flip',
                                'your', 'opponent', 'this', 'that', 'the', 'attack', 'ability',
                                'spatial', 'active', 'stadium', 'cards', 'hand', 'during']);
 
-    const potentialAttacks = words
+    const midWords = (middleText || fullText).toLowerCase().split(/\s+/);
+    const potentialAttacks = midWords
       .filter(w => {
-        const clean = w.replace(/[^a-zA-Z]/g, '').toLowerCase();
+        const clean = w.replace(/[^a-zA-Zа-яёА-ЯЁ]/g, '').toLowerCase();
         return clean.length > 5 && !skipWords.has(clean) && !/^\d+$/.test(w);
       })
-      .map(w => w.replace(/[^a-zA-Z]/g, '').toLowerCase());
+      .map(w => w.replace(/[^a-zA-Zа-яёА-ЯЁ]/g, '').toLowerCase());
 
     result.attacks = [...new Set([...result.attacks, ...potentialAttacks])];
 
-    console.log('Detected attacks:', result.attacks.slice(0, 5));
+    // Переводим русские атаки
+    const translatedAttacks: string[] = [];
+    for (const attack of result.attacks) {
+      if (this.ruAttacks[attack]) {
+        translatedAttacks.push(this.ruAttacks[attack]);
+      } else {
+        translatedAttacks.push(attack);
+      }
+    }
+    // Проверяем полный текст на русские атаки (многословные)
+    for (const [ruAttack, enAttack] of Object.entries(this.ruAttacks)) {
+      if (fullText.toLowerCase().includes(ruAttack)) {
+        translatedAttacks.push(enAttack);
+      }
+    }
+    result.attacks = [...new Set(translatedAttacks)];
+
+    console.log('Parsed:', { name: result.name, hp: result.hp, set: result.setNumber, attacks: result.attacks.slice(0, 3) });
 
     return result;
   }
@@ -246,11 +305,9 @@ export class DatabaseService {
   /**
    * Главный метод поиска кандидатов
    */
-  async findCandidates(words: string[], fullText: string): Promise<any[]> {
-    const parsed = this.parseOCRText(fullText, words);
+  async findCandidates(words: string[], fullText: string, zones?: ZoneResult): Promise<any[]> {
+    const parsed = this.parseOCRText(fullText, words, zones);
     const candidates: CardCandidate[] = [];
-
-    console.log('Parsed OCR:', { name: parsed.name, hp: parsed.hp, setNumber: parsed.setNumber });
 
     // Стратегия 1: Если есть HP - начинаем с фильтрации по HP
     let searchPool = this.allCards;
